@@ -1,0 +1,7 @@
+{
+  "name": "libxiaohong_rag.so",
+  "version": "0.1.0",
+  "description": "Local M2 retrieval engine native module",
+  "types": "./Index.d.ts",
+  "license": "MIT"
+}

@@ -1,0 +1,17 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust-and-c-ffi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test Rust crate
+        run: cargo test --locked
+      - name: Check Rust crate
+        run: cargo check --locked
+      - name: Compile and run C ABI smoke test
+        run: cargo build --locked && cc -std=c11 -Wall -Wextra -Werror -I include tests/ffi_smoke.c -L target/debug -lxiaohong_rag -Wl,-rpath,"$PWD/target/debug" -o target/debug/ffi_smoke && target/debug/ffi_smoke
