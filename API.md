@@ -128,6 +128,26 @@ ID/title 不得为空，批次不得为空或含重复 ID；同一文档 revisio
 
 `sourceStart` / `sourceEnd` 是原始修订 UTF-8 字节偏移的半开区间 `[start,end)`，不是 ArkTS UTF-16 下标。无编码器时 `vectorRank` 为 null 并返回 keyword-only warning。命中只是候选，不是生成答案。
 
+## 融合搜索：`federatedSearch`
+
+本机索引始终是默认来源 `"local"`。Rust 宿主可通过 `register_provider` 注入实现 `SearchProvider` trait 的其他源（如其他 App、系统搜索或互联网服务）。请求：
+
+```json
+{"query":"几何重数","sources":[],"topK":6,"rrfK":60}
+```
+
+`sources` 省略或为空表示本机索引加全部已注册源；提供 ID 列表则只选这些源。每个源先内部排序（源内 rank 从 1 开始），再按 `1/(rrfK + rank)` 跨源融合，总分降序、sourceId、reference 稳定排序后截断到 `topK`。
+
+成功 `data`：
+
+```json
+{"schemaVersion":1,"query":"几何重数","hits":[{"sourceId":"local","title":"线代复习","reference":"DEMO-LA-001:r1:c0001","snippet":"几何重数等于特征子空间的维数……","providerScore":0.016,"fusedScore":0.016,"sourceRank":1}],"warnings":[]}
+```
+
+- `reference` 对本地命中是可回传 `resolve` 的 `chunkId`；外部源由 provider 自行定义 URI/引用。
+- 单个源失败或返回错误时进入 `warnings`，不影响其他源；融合结果仍是候选证据，不是生成答案。
+- 本 crate 不实现外部源、不发起网络/跨应用调用；宿主必须在接入与出端前校验数据等级、用户许可和网络可达性。
+
 ## 限范围搜索：`searchScoped`
 
 ```json

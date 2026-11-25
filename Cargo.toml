@@ -3,7 +3,7 @@ name = "xiaohong-rag"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
-description = "Local dual-channel retrieval and citation engine for Xiaohong on OpenHarmony"
+description = "Fused local + pluggable-source search with citations for Xiaohong on OpenHarmony"
 license = "MIT"
 
 [lib]

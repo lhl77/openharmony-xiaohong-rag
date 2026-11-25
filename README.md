@@ -1,12 +1,13 @@
-# 小鸿 M2 本地检索引擎
+# 小鸿 M2 融合搜索
 
-独立 Rust crate，为端侧笔记提供分块、关键词检索、可注入向量编码器、RRF 排名和引用回链。C ABI 与 OpenHarmony N-API 遵循每个方法一个 JSON 字符串的契约。
+独立 Rust crate：本机双通道索引是默认搜索源，宿主应用可通过 `SearchProvider` trait 把其他 App、系统检索或互联网服务接入，M2 负责跨源 RRF 融合、来源标记与降级。C ABI 与 OpenHarmony N-API 遵循每个方法一个 JSON 字符串的契约。
 
 ## 功能
 
 - 文档以 `documentId + revision` 标识；新修订替换旧索引，删除移除当前文档并保留 revision 高水位。
 - Unicode grapheme 感知分块，保留原文 UTF-8 byte range；关键词基线支持 ASCII 字母数字 token、汉字单字和相邻双字。
 - `Embedder` trait 允许 Rust 宿主注入向量编码器；仓库不包含或下载模型。
+- `SearchProvider` trait 让宿主接入其他 App、系统搜索或互联网源；`federatedSearch` 对本机索引与注册源做跨源 RRF 融合。
 - `searchScoped`、`resolveScoped`、`styleProfile` 接受调用方提供的 `allowedDocumentIds`。空集合不选择任何文档；这不是身份验证或授权。
 - 双通道 RRF 返回候选 Citation；`resolve` 可从当前索引重新取得引用内容。
 - 默认 `NoopEmbedder` 的维度为 0，搜索只用 keyword 通道并在响应中发出 warning。
@@ -17,6 +18,7 @@
 - 默认没有真实 embedding。启用向量通道需 Rust 宿主注入 `Embedder`，并让其维度与配置一致；C ABI/N-API init 不加载模型。
 - 关键词实现是确定性基线，不是完整中文分词器；检索结果是候选证据，不等于生成答案。
 - 不提供用户身份验证、授权、跨进程安全边界、云服务或个人数据脱敏。`allowedDocumentIds` 只是选择过滤，上层必须自行实施访问控制。
+- 互联网/其他 App 源由宿主通过 `SearchProvider` 实现；本 crate 不发起网络请求、不访问其他应用，出端前必须由宿主校验数据等级与用户许可。
 - `styleProfile` 仅汇总标题级别、列表标记和正文段落平均 grapheme 长度等结构统计，不返回笔记正文，也不推断语义风格。
 - 已提供 N-API 和交叉构建入口，但本仓库环境没有 OpenHarmony SDK/NDK，无法在此验证 OHOS target 链接或真机运行。
 

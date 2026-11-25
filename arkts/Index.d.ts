@@ -27,6 +27,16 @@ export interface StyleProfile {
   averageParagraphLength: number;
 }
 export interface IndexStats { documents: number; chunks: number; embeddingDimension: number; }
+export interface FederatedHit {
+  sourceId: string; title: string; reference: string; snippet: string;
+  providerScore: number; fusedScore: number; sourceRank: number;
+}
+export interface FederatedSearchRequest {
+  query: string; sources?: string[]; topK?: number; rrfK?: number;
+}
+export interface FederatedSearchResponse {
+  schemaVersion: number; query: string; hits: FederatedHit[]; warnings: string[];
+}
 export interface InitConfig {
   chunkTargetChars?: number; chunkOverlapChars?: number;
   embeddingDimension?: number; minimumChunkChars?: number;
@@ -37,6 +47,7 @@ declare const rag: {
   addDocuments(requestJson: string): Promise<string>;
   search(requestJson: string): Promise<string>;
   searchScoped(requestJson: string): Promise<string>;
+  federatedSearch(requestJson: string): Promise<string>;
   resolve(requestJson: string): Promise<string>;
   resolveScoped(requestJson: string): Promise<string>;
   styleProfile(requestJson: string): Promise<string>;

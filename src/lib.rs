@@ -3,21 +3,26 @@ mod chunk;
 mod engine;
 mod tokenize;
 mod types;
-pub use engine::{Embedder,NoopEmbedder,RagEngine};
+pub use engine::{Embedder,FederatedSearch,NoopEmbedder,RagEngine,SearchProvider};
 pub use types::*;
 
 use std::ffi::{CStr,CString,c_char};
 use std::panic::{AssertUnwindSafe,catch_unwind};
 use std::sync::{Arc,OnceLock,RwLock};
 const MAX_INPUT_BYTES: usize = 32 * 1024 * 1024;
-static ENGINE:OnceLock<RwLock<Option<RagEngine>>>=OnceLock::new();
-fn slot()->&'static RwLock<Option<RagEngine>>{ENGINE.get_or_init(||RwLock::new(None))}
+static ENGINE:OnceLock<RwLock<Option<Arc<RagEngine>>>>=OnceLock::new();
+static FEDERATED:OnceLock<RwLock<Option<FederatedSearch>>>=OnceLock::new();
+fn slot()->&'static RwLock<Option<Arc<RagEngine>>>{ENGINE.get_or_init(||RwLock::new(None))}
+fn federated()->&'static RwLock<Option<FederatedSearch>>{FEDERATED.get_or_init(||RwLock::new(None))}
 
-pub fn init_engine(config:IndexConfig)->RagResult<()> {let engine=RagEngine::new(config,Arc::new(NoopEmbedder))?;*slot().write().map_err(|_|RagError::PoisonedLock)?=Some(engine);Ok(())}
-pub fn install_engine(engine:RagEngine)->RagResult<()> {*slot().write().map_err(|_|RagError::PoisonedLock)?=Some(engine);Ok(())}
+pub fn init_engine(config:IndexConfig)->RagResult<()> {let engine=Arc::new(RagEngine::new(config,Arc::new(NoopEmbedder))?);*slot().write().map_err(|_|RagError::PoisonedLock)?=Some(engine.clone());*federated().write().map_err(|_|RagError::PoisonedLock)?=Some(FederatedSearch::new(engine));Ok(())}
+pub fn install_engine(engine:RagEngine)->RagResult<()> {let engine=Arc::new(engine);*slot().write().map_err(|_|RagError::PoisonedLock)?=Some(engine.clone());*federated().write().map_err(|_|RagError::PoisonedLock)?=Some(FederatedSearch::new(engine));Ok(())}
 pub fn add_documents(request_json:&str)->RagResult<IndexStats>{let req:AddDocumentsRequest=serde_json::from_str(request_json)?;slot().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.add_documents(req.documents)}
 pub fn search(request_json:&str)->RagResult<SearchResponse>{let req:SearchRequest=serde_json::from_str(request_json)?;slot().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.search(req)}
 pub fn remove_document(document_id:&str)->RagResult<bool>{slot().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.remove_document(document_id)}
+pub fn federated_search(request_json:&str)->RagResult<FederatedSearchResponse>{let req:FederatedSearchRequest=serde_json::from_str(request_json)?;federated().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.search(req)}
+pub fn register_provider(provider:Arc<dyn SearchProvider>)->RagResult<()>{federated().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.register(provider);Ok(())}
+pub fn unregister_provider(id:&str)->RagResult<bool>{Ok(federated().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.unregister(id))}
 
 fn envelope<T:serde::Serialize>(res:RagResult<T>)->String{match res{Ok(data)=>serde_json::json!({"ok":true,"data":data}).to_string(),Err(e)=>serde_json::json!({"ok":false,"error":{"code":e.code(),"message":e.to_string()}}).to_string()}}
 unsafe fn read(ptr:*const c_char)->RagResult<String>{if ptr.is_null(){return Err(RagError::NullPointer)}let bytes=unsafe{CStr::from_ptr(ptr)}.to_bytes();if bytes.len()>MAX_INPUT_BYTES{return Err(RagError::InvalidRequest("input exceeds 32 MiB".into()))}let text=std::str::from_utf8(bytes).map_err(|e|RagError::InvalidRequest(format!("input is not UTF-8: {e}")))?;Ok(text.to_owned())}
@@ -30,6 +35,7 @@ fn ffi<T:serde::Serialize>(input:*const c_char,operation:impl FnOnce(&str)->RagR
 #[unsafe(no_mangle)] pub unsafe extern "C" fn m2_add_documents_json(input:*const c_char)->*mut c_char{ffi(input,add_documents)}
 #[unsafe(no_mangle)] pub unsafe extern "C" fn m2_search_json(input:*const c_char)->*mut c_char{ffi(input,search)}
 #[unsafe(no_mangle)] pub unsafe extern "C" fn m2_search_scoped_json(input:*const c_char)->*mut c_char{ffi(input,|v|{let r:ScopedSearchRequest=serde_json::from_str(v)?;slot().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.search_scoped(r.request,&r.allowed_document_ids)})}
+#[unsafe(no_mangle)] pub unsafe extern "C" fn m2_federated_search_json(input:*const c_char)->*mut c_char{ffi(input,federated_search)}
 #[unsafe(no_mangle)] pub unsafe extern "C" fn m2_resolve_json(input:*const c_char)->*mut c_char{ffi(input,|v|{let r:SourceReference=serde_json::from_str(v)?;slot().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.resolve(&r)})}
 #[unsafe(no_mangle)] pub unsafe extern "C" fn m2_resolve_scoped_json(input:*const c_char)->*mut c_char{ffi(input,|v|{let r:ScopedResolveRequest=serde_json::from_str(v)?;slot().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.resolve_scoped(&r.reference,&r.allowed_document_ids)})}
 #[unsafe(no_mangle)] pub unsafe extern "C" fn m2_style_profile_json(input:*const c_char)->*mut c_char{ffi(input,|v|{let r:StyleRequest=serde_json::from_str(v)?;slot().read().map_err(|_|RagError::PoisonedLock)?.as_ref().ok_or(RagError::InvalidRequest("engine is not initialized".into()))?.style_profile(r)})}

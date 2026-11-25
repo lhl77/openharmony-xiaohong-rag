@@ -21,6 +21,11 @@ export async function retrieve(query: string, course?: string): Promise<string> 
     rrfK: 60, vectorWeight: 1, keywordWeight: 1 }));
 }
 
+// Fused search across the local index and host-registered providers.
+export async function fusedRetrieve(query: string, sources?: string[]): Promise<string> {
+  return rag.federatedSearch(JSON.stringify({ query, sources, topK: 6, rrfK: 60 }));
+}
+
 // This is a caller-supplied selection filter, not identity authorization.
 export async function retrieveAllowed(query: string, allowedDocumentIds: string[]): Promise<string> {
   return rag.searchScoped(JSON.stringify({ request: { query, topK: 5 }, allowedDocumentIds }));

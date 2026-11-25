@@ -18,6 +18,129 @@ impl Embedder for NoopEmbedder {
     fn embed(&self, _: &str) -> Result<Vec<f32>, String> { Ok(Vec::new()) }
 }
 
+/// Adapter contract for searchable sources outside the local index.
+/// Host applications implement this trait to bridge other in-device apps,
+/// system search APIs, or internet services into M2's fused search.
+pub trait SearchProvider: Send + Sync {
+    fn id(&self) -> &str;
+    /// Return up to `top_k` candidates. Providers rank themselves internally;
+    /// the federated engine only re-ranks across sources via reciprocal rank.
+    fn search(&self, query: &str, top_k: usize) -> Result<Vec<ProviderHit>, String>;
+}
+
+/// Single fused-search entry point: the local index plus registered providers.
+pub struct FederatedSearch {
+    local: Arc<RagEngine>,
+    providers: RwLock<Vec<Arc<dyn SearchProvider>>>,
+}
+
+impl FederatedSearch {
+    pub fn new(local: Arc<RagEngine>) -> Self {
+        Self { local, providers: RwLock::new(Vec::new()) }
+    }
+
+    /// Register or replace a provider with the same ID.
+    pub fn register(&self, provider: Arc<dyn SearchProvider>) -> bool {
+        let Ok(mut providers) = self.providers.write() else { return false };
+        if let Some(slot) = providers.iter_mut().find(|p| p.id() == provider.id()) {
+            *slot = provider;
+        } else {
+            providers.push(provider);
+        }
+        true
+    }
+
+    pub fn unregister(&self, id: &str) -> bool {
+        let Ok(mut providers) = self.providers.write() else { return false };
+        let before = providers.len();
+        providers.retain(|p| p.id() != id);
+        providers.len() != before
+    }
+
+    pub fn search(&self, request: FederatedSearchRequest) -> RagResult<FederatedSearchResponse> {
+        if request.query.trim().is_empty() {
+            return Err(RagError::InvalidRequest("query must not be empty".into()));
+        }
+        if !(1..=50).contains(&request.top_k) {
+            return Err(RagError::InvalidRequest("topK must be between 1 and 50".into()));
+        }
+        if request.rrf_k == 0 || request.rrf_k > MAX_RRF_K {
+            return Err(RagError::InvalidRequest("rrfK must be between 1 and 10000".into()));
+        }
+        let use_source = |id: &str| {
+            request.sources.is_empty() || request.sources.iter().any(|source| source == id)
+        };
+
+        let mut warnings = Vec::new();
+        let mut grouped: Vec<(String, Vec<ProviderHit>)> = Vec::new();
+
+        if use_source("local") {
+            let local_request = SearchRequest {
+                query: request.query.clone(),
+                course_filter: None,
+                top_k: request.top_k,
+                rrf_k: request.rrf_k,
+                vector_weight: 1.0,
+                keyword_weight: 1.0,
+            };
+            match self.local.search(local_request) {
+                Ok(response) => {
+                    warnings.extend(response.warnings.iter().cloned());
+                    let hits = response.hits.into_iter().map(|hit| ProviderHit {
+                        title: hit.citation.title,
+                        reference: hit.citation.chunk_id,
+                        snippet: hit.citation.text,
+                        score: hit.score,
+                    }).collect();
+                    grouped.push(("local".to_string(), hits));
+                }
+                Err(error) => warnings.push(format!("local source failed: {error}")),
+            }
+        }
+
+        let providers = self.providers.read().map_err(|_| RagError::PoisonedLock)?;
+        for provider in providers.iter() {
+            if !use_source(provider.id()) {
+                continue;
+            }
+            match provider.search(&request.query, request.top_k) {
+                Ok(hits) => grouped.push((provider.id().to_string(), hits)),
+                Err(error) => warnings.push(format!("source {} failed: {}", provider.id(), error)),
+            }
+        }
+        drop(providers);
+
+        let mut fused = Vec::new();
+        for (source_id, mut hits) in grouped {
+            hits.sort_by(|a, b| b.score.total_cmp(&a.score)
+                .then_with(|| a.reference.cmp(&b.reference)));
+            for (rank, hit) in hits.into_iter().enumerate() {
+                let source_rank = rank + 1;
+                let fused_score = 1.0 / (request.rrf_k as f32 + source_rank as f32);
+                fused.push(FederatedHit {
+                    source_id: source_id.clone(),
+                    title: hit.title,
+                    reference: hit.reference,
+                    snippet: hit.snippet,
+                    provider_score: hit.score,
+                    fused_score,
+                    source_rank,
+                });
+            }
+        }
+        fused.sort_by(|a, b| b.fused_score.total_cmp(&a.fused_score)
+            .then_with(|| a.source_id.cmp(&b.source_id))
+            .then_with(|| a.reference.cmp(&b.reference)));
+        fused.truncate(request.top_k);
+        Ok(FederatedSearchResponse {
+            schema_version: 1,
+            query: request.query,
+            hits: fused,
+            warnings,
+        })
+    }
+}
+
 #[derive(Clone)]
 struct IndexedChunk {
     citation: Citation,

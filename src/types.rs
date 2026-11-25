@@ -77,6 +77,55 @@ pub struct SearchResponse {
     pub warnings: Vec<String>,
 }
 
+/// A provider-agnostic search result before cross-source fusion.
+/// Providers return these; the engine assigns source ranks and fuses them.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderHit {
+    pub title: String,
+    /// Opaque locator: documentId:revision:chunkId for local hits,
+    /// or a URI / app-specific reference supplied by the provider.
+    pub reference: String,
+    pub snippet: String,
+    pub score: f32,
+}
+
+/// One fused result across local index and registered providers.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FederatedHit {
+    pub source_id: String,
+    pub title: String,
+    pub reference: String,
+    pub snippet: String,
+    #[serde(default)]
+    pub provider_score: f32,
+    pub fused_score: f32,
+    pub source_rank: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FederatedSearchRequest {
+    pub query: String,
+    /// Empty selects the local index plus every registered provider.
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    #[serde(default = "default_rrf_k")]
+    pub rrf_k: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FederatedSearchResponse {
+    pub schema_version: u16,
+    pub query: String,
+    pub hits: Vec<FederatedHit>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchRequest {

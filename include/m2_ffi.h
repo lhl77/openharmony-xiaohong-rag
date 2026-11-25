@@ -6,6 +6,7 @@ char* m2_init_json(const char* json);
 char* m2_add_documents_json(const char* json);
 char* m2_search_json(const char* json);
 char* m2_search_scoped_json(const char* json);
+char* m2_federated_search_json(const char* json);
 char* m2_resolve_json(const char* json);
 char* m2_resolve_scoped_json(const char* json);
 char* m2_style_profile_json(const char* json);

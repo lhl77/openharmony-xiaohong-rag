@@ -25,6 +25,9 @@ int main(void) {
   result = m2_search_scoped_json("{\"request\":{\"query\":\"smoke\"},\"allowedDocumentIds\":[]}");
   if (!check(result) || strstr(result, "\"hits\":[]") == NULL) { if (result) m2_free_string(result); return 4; }
   m2_free_string(result);
+  result = m2_federated_search_json("{\"query\":\"smoke\",\"topK\":5,\"rrfK\":60}");
+  if (!check(result) || strstr(result, "\"sourceId\":\"local\"") == NULL) { if (result) m2_free_string(result); return 12; }
+  m2_free_string(result);
   result = m2_resolve_json("{\"documentId\":\"c-smoke\",\"revision\":1,\"chunkId\":\"c-smoke:r1:c0001\"}");
   if (!check(result) || strstr(result, "C ABI smoke test phrase") == NULL) { if (result) m2_free_string(result); return 5; }
   m2_free_string(result);
